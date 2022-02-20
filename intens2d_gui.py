@@ -9,6 +9,7 @@ class ExampleViewer(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.auto_level = None
+        self.rng = np.random.default_rng()
         self._init_ui()
 
     def _init_ui(self):
@@ -23,9 +24,13 @@ class ExampleViewer(QtWidgets.QMainWindow):
         layout.addLayout(self.view_boxes, stretch=1)
         self.dens_view = pg.ImageView(self, 'densView')
         self.dens_view.setPredefinedGradient('magma')
+        self.dens_view.ui.roiBtn.hide()
+        self.dens_view.ui.menuBtn.hide()
         self.view_boxes.addWidget(self.dens_view, stretch=1)
         self.intens_view = pg.ImageView(self, 'intensView')
         self.intens_view.setPredefinedGradient('viridis')
+        self.intens_view.ui.roiBtn.hide()
+        self.intens_view.ui.menuBtn.hide()
         self.view_boxes.addWidget(self.intens_view, stretch=1)
 
         self.plot_options = QtWidgets.QHBoxLayout()
@@ -42,11 +47,12 @@ class ExampleViewer(QtWidgets.QMainWindow):
         self.shape_options.currentChanged.connect(self._tab_changed)
         layout.addWidget(self.shape_options)
         tab = self._init_rect_tab()
-        self.shape_options.insertTab(0, tab, 'Rectangle')
+        self.shape_options.insertTab(0, tab, 'Uniform Rectangle')
+        tab = self._init_rand_mask_tab()
+        self.shape_options.insertTab(1, tab, 'Random Mask')
 
         self.auto_level = True
         self._rect_draw()
-        self.auto_level = False
 
         self.show()
 
@@ -116,6 +122,61 @@ class ExampleViewer(QtWidgets.QMainWindow):
 
         return tab
 
+    def _init_rand_mask_tab(self):
+        tab = QtWidgets.QWidget(self)
+        tlayout = QtWidgets.QVBoxLayout()
+        tab.setLayout(tlayout)
+
+        line = QtWidgets.QHBoxLayout()
+        tlayout.addLayout(line)
+        label = QtWidgets.QLabel('FOV size:', self)
+        line.addWidget(label)
+        self._rmask_fov = QtWidgets.QLineEdit('1023', self)
+        self._rmask_fov.editingFinished.connect(self._rand_mask_draw)
+        line.addWidget(self._rmask_fov)
+        label = QtWidgets.QLabel('pixels', self)
+        line.addWidget(label)
+        line.addStretch(1)
+
+        line = QtWidgets.QHBoxLayout()
+        tlayout.addLayout(line)
+        label = QtWidgets.QLabel('Num points:', self)
+        line.addWidget(label)
+        self._rmask_npts = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
+        self._rmask_npts.setRange(5, 100)
+        self._rmask_npts.setValue(10)
+        self._rmask_npts.setFixedWidth(300)
+        self._rmask_npts.sliderMoved.connect(self._rand_mask_draw)
+        line.addWidget(self._rmask_npts)
+        line.addStretch(1)
+
+        line = QtWidgets.QHBoxLayout()
+        tlayout.addLayout(line)
+        label = QtWidgets.QLabel('Contrast:', self)
+        line.addWidget(label)
+        self._rmask_contr = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
+        self._rmask_contr.setRange(1, 100)
+        self._rmask_contr.setValue(1)
+        self._rmask_contr.setFixedWidth(300)
+        self._rmask_contr.sliderMoved.connect(self._rand_mask_draw)
+        line.addWidget(self._rmask_contr)
+        line.addStretch(1)
+
+        line = QtWidgets.QHBoxLayout()
+        tlayout.addLayout(line)
+        button = QtWidgets.QPushButton('Update', self)
+        button.clicked.connect(self._rand_mask_draw)
+        line.addWidget(button)
+        self._rmask_masked = QtWidgets.QCheckBox('Masked', self)
+        self._rmask_masked.setChecked(True)
+        self._rmask_masked.stateChanged.connect(self._rand_mask_draw)
+        line.addWidget(self._rmask_masked)
+        line.addStretch(1)
+
+        tlayout.addStretch(1)
+
+        return tab
+
     def _rect_draw(self):
         fov = int(self._rect_fov.text())
         dens = np.zeros((fov, fov))
@@ -128,10 +189,37 @@ class ExampleViewer(QtWidgets.QMainWindow):
             dens = ndimage.gaussian_filter(dens, blur_sigma)
 
         self.set_dens(dens)
+        self.auto_level = False
+
+    def _rand_mask_draw(self):
+        fov = int(self._rmask_fov.text())
+        mask = np.zeros((fov, fov))
+        mask[fov//2-10:fov//2+11, fov//2-10:fov//2+11] = 1
+        npts = self._rmask_npts.value()
+        var = 1.
+        contrast = 10. / self._rmask_contr.value()
+
+        pos = np.round(self.rng.uniform(fov//2-10, fov//2+10, size=(npts, 2))).astype('i8')
+        vals = self.rng.gamma(var, 1./var, size=npts)
+        sigma = 100./npts
+
+        arr = np.zeros_like(mask)
+        arr[pos[:,0], pos[:,1]] = vals
+        arr = ndimage.gaussian_filter(arr, sigma)
+        if self._rmask_masked.isChecked():
+            arr[mask==0.] = 0
+            arr[mask==1.] += contrast
+        arr *= 441 / arr.sum()
+
+        self.set_dens(arr)
+        self.auto_level = False
 
     def set_dens(self, dens):
         self.curr_dens = dens
+        vr = self.dens_view.getImageItem().getViewBox().targetRect()
         self.dens_view.setImage(dens, autoHistogramRange=False, autoLevels=self.auto_level)
+        if not self.auto_level:
+            self.dens_view.getImageItem().getViewBox().setRange(vr, padding=0)
         self.update_intens()
 
     def update_intens(self, log_changed=False):
@@ -139,10 +227,14 @@ class ExampleViewer(QtWidgets.QMainWindow):
         if self.log_intens.isChecked():
             intens[intens<=0] = 1e-20
             intens = np.log10(intens)
+
+        vr = self.intens_view.getImageItem().getViewBox().targetRect()
         if log_changed:
             self.intens_view.setImage(intens, autoHistogramRange=False, autoLevels=True)
         else:
             self.intens_view.setImage(intens, autoHistogramRange=False, autoLevels=self.auto_level)
+        if not self.auto_level:
+            self.intens_view.getImageItem().getViewBox().setRange(vr, padding=0)
 
 def main():
     app = QtWidgets.QApplication([])
