@@ -1,6 +1,7 @@
 import sys
 
 import numpy as np
+from scipy import ndimage
 from PyQt5 import QtCore, QtWidgets, QtGui
 import pyqtgraph as pg
 
@@ -12,7 +13,7 @@ class ExampleViewer(QtWidgets.QMainWindow):
 
     def _init_ui(self):
         self.resize(1600, 800)
-        
+
         widget = QtWidgets.QWidget()
         self.setCentralWidget(widget)
         layout = QtWidgets.QVBoxLayout()
@@ -56,7 +57,7 @@ class ExampleViewer(QtWidgets.QMainWindow):
         tab = QtWidgets.QWidget(self)
         tlayout = QtWidgets.QVBoxLayout()
         tab.setLayout(tlayout)
-        
+
         line = QtWidgets.QHBoxLayout()
         tlayout.addLayout(line)
         label = QtWidgets.QLabel('FOV size:', self)
@@ -94,6 +95,18 @@ class ExampleViewer(QtWidgets.QMainWindow):
 
         line = QtWidgets.QHBoxLayout()
         tlayout.addLayout(line)
+        label = QtWidgets.QLabel('Blurring:', self)
+        line.addWidget(label)
+        self._rect_blur = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
+        self._rect_blur.setRange(0, 400)
+        self._rect_blur.setValue(0)
+        self._rect_blur.setFixedWidth(300)
+        self._rect_blur.sliderMoved.connect(self._rect_draw)
+        line.addWidget(self._rect_blur)
+        line.addStretch(1)
+
+        line = QtWidgets.QHBoxLayout()
+        tlayout.addLayout(line)
         button = QtWidgets.QPushButton('Update', self)
         button.clicked.connect(self._rect_draw)
         line.addWidget(button)
@@ -110,6 +123,9 @@ class ExampleViewer(QtWidgets.QMainWindow):
         ox = fov // 2 - sx // 2
         oy = fov // 2 - sy // 2
         dens[ox:ox+sx, oy:oy+sy] = 1
+        blur_sigma = self._rect_blur.value() / 100.
+        if blur_sigma > 0.:
+            dens = ndimage.gaussian_filter(dens, blur_sigma)
 
         self.set_dens(dens)
 
